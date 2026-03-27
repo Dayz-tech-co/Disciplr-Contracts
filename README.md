@@ -511,6 +511,26 @@ cargo build --target wasm32-unknown-unknown --release
 
 Output: `target/wasm32-unknown-unknown/release/disciplr_vault.wasm`
 
+### Format
+
+Code style is enforced by `rustfmt`. The CI pipeline runs `cargo fmt -- --check` as a **dedicated `fmt` job** that must pass before the build/test job is allowed to start. This gives reviewers and auditors a clear, isolated signal when a PR has style issues.
+
+Formatting rules are pinned in [`rustfmt.toml`](./rustfmt.toml).
+
+Check formatting locally (exact mirror of CI):
+
+```bash
+cargo fmt -- --check
+```
+
+Auto-fix all formatting in place:
+
+```bash
+cargo fmt
+```
+
+> If `cargo fmt -- --check` exits non-zero, run `cargo fmt` and commit the result before pushing.
+
 ### Test
 
 ```bash
@@ -657,19 +677,25 @@ git push origin feature/your-feature-name
 
 Before submitting a PR:
 
-1. **Run all tests**:
+1. **Check formatting** (CI gate — must pass first):
+   ```bash
+   cargo fmt -- --check
+   # If it fails, run: cargo fmt
+   ```
+
+2. **Run all tests**:
    ```bash
    cargo test
    ```
 
-2. **Build for release**:
+3. **Build for release**:
    ```bash
    cargo build --target wasm32-unknown-unknown --release
    ```
 
-3. **Verify no warnings**:
+4. **Verify no warnings**:
    ```bash
-   cargo clippy
+   cargo clippy -- -D warnings
    ```
 
 ### Test Coverage
