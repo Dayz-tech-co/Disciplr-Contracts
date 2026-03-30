@@ -39,6 +39,8 @@ For detailed contract documentation, see [vesting.md](vesting.md).
 
 The Disciplr Vault follows a transparent security model based on creator authorization and optional third-party verification. For a detailed analysis of the trust model, assumptions, and known limitations (including CEI pattern notes), please refer to the [Security and Trust Model](vesting.md#security-and-trust-model) in the documentation.
 
+`milestone_hash` is commitment metadata only. The contract stores the 32-byte value as opaque bytes so off-chain participants can reference the same milestone document, but authorization, state transitions, and fund safety do not rely on any specific hash-function property. Post-quantum cryptography considerations are therefore not applicable to the current on-chain logic.
+
 ---
 
 # Contract Documentation
@@ -90,7 +92,7 @@ pub struct ProductivityVault {
     pub amount: i128,                // Amount of USDC locked (in stroops)
     pub start_timestamp: u64,       // Unix timestamp when vault becomes active
     pub end_timestamp: u64,          // Unix deadline for milestone validation
-    pub milestone_hash: BytesN<32>, // SHA-256 hash of milestone requirements
+    pub milestone_hash: BytesN<32>, // Commitment metadata for milestone requirements
     pub verifier: Option<Address>,  // Optional trusted verifier address
     pub success_destination: Address, // Address for fund release on success
     pub failure_destination: Address, // Address for fund redirect on failure
@@ -104,7 +106,7 @@ pub struct ProductivityVault {
 | `amount` | `i128` | Total USDC amount locked (in stroops, 1 USDC = 10^7 stroops) |
 | `start_timestamp` | `u64` | Unix timestamp (seconds) when vault becomes active |
 | `end_timestamp` | `u64` | Unix timestamp (seconds) deadline for milestone validation |
-| `milestone_hash` | `BytesN<32>` | SHA-256 hash documenting milestone requirements |
+| `milestone_hash` | `BytesN<32>` | Commitment metadata for an off-chain milestone description |
 | `verifier` | `Option<Address>` | Optional trusted party who can validate milestones |
 | `success_destination` | `Address` | Recipient address on successful milestone completion |
 | `failure_destination` | `Address` | Recipient address when milestone is not completed |
@@ -137,7 +139,7 @@ pub fn create_vault(
 - `amount`: USDC amount to lock (in stroops)
 - `start_timestamp`: When vault becomes active (unix seconds)
 - `end_timestamp`: Deadline for milestone validation (unix seconds)
-- `milestone_hash`: SHA-256 hash of milestone document
+- `milestone_hash`: commitment metadata for the off-chain milestone document
 - `verifier`: Optional verifier address (None = anyone can validate)
 - `success_destination`: Address to receive funds on success
 - `failure_destination`: Address to receive funds on failure
