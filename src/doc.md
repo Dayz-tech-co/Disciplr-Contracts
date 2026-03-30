@@ -95,3 +95,18 @@ Tests live in `src/tests.rs` and cover the following scenarios:
 | `test_redirect_unknown_vault_panics` | Unknown ID panics on redirect |
 
 **20 tests total.** All happy paths, all idempotency edge cases, and all cross-function interaction cases are covered, exceeding the 95% coverage requirement.
+
+---
+
+## Upgrade Policy
+
+This contract is deployed as **immutable WASM**. There is no proxy, no `update_current_contract_wasm` call, and no admin upgrade key.
+
+To ship a new version:
+1. Build and optimize the new WASM (`stellar contract build --release`).
+2. Deploy to a **new** contract address (`stellar contract deploy …`).
+3. Call `initialize` on the new address.
+4. Update all client integrations to point at the new address.
+5. Allow existing vaults on the old contract to reach their terminal state naturally.
+
+Active vaults on the old contract are **not** migrated. They continue to execute under the original code until cancelled, completed, or redirected.

@@ -518,3 +518,30 @@ disciplr-contracts/
 | Version | Changes |
 |---------|---------|
 | 0.1.0 | Initial release with basic vault structure, stubbed implementations |
+
+
+---
+
+## Upgrade Policy
+
+### Immutable WASM — No Proxy
+
+The `disciplr-vault` contract is deployed as **immutable WASM** on Stellar/Soroban.
+
+| Property | Value |
+|---|---|
+| Proxy / upgradeability | ❌ None |
+| `update_current_contract_wasm` | Not called; not exposed |
+| Admin key for upgrades | Does not exist |
+| Upgrade path | Redeploy a new contract; migrate state off-chain if needed |
+
+**Why no proxy?**  
+Soroban does not have a transparent-proxy pattern equivalent to EVM. Upgrades require redeploying a new WASM hash and re-initialising the contract. Any in-flight vaults on the old contract continue to run to completion under the old code — they are **not** migrated automatically.
+
+### Redeploy Checklist (summary)
+
+See the [Testnet Deploy Checklist](README.md#testnet-deploy-checklist) in README.md for the full step-by-step procedure.
+
+### Security Implication
+
+Because the WASM is immutable after deployment, auditors can verify the exact bytecode on-chain matches the reviewed source. There is no admin key that can silently swap the implementation.
