@@ -518,3 +518,29 @@ disciplr-contracts/
 | Version | Changes |
 |---------|---------|
 | 0.1.0 | Initial release with basic vault structure, stubbed implementations |
+
+---
+
+## Appendix: Incident Response Runbook for Paused Network
+
+This section provides operational guidelines in the event of a significant Stellar network incident or Soroban runtime pause.
+
+### 1. Incident Detection & Verification
+- **Monitor Official Channels:** Follow official Stellar status pages (status.stellar.org), the Stellar Developers Discord, and community announcements for confirmation of network degradation or a full pause.
+- **Verify On-Chain Activity:** Confirm the inability to submit transactions or the cessation of ledger closing through a trusted horizon/RPC node.
+
+### 2. Immediate Operational Actions
+- **Pause Front-End Integrations:** If your application interfaces with the Disciplr Vault, immediately display a maintenance banner and temporarily disable all "Create", "Validate", "Release", "Cancel", and "Redirect" actions on the user interface to prevent transaction timeouts or stuck user funds.
+- **Disable Automated Scripts:** Halt any cron jobs, automated listeners, or off-chain verifier bots that may attempt to blindly submit validation or redirection transactions.
+
+### 3. Impact Assessment
+- **Identify Expiring Vaults:** Query your indexed data or off-chain database to identify any active vaults whose `end_timestamp` falls within the expected downtime window.
+- **Communicate with Stakeholders:** Notify affected creators and verifiers that their vault transactions are delayed. If a deadline expires during the pause, neither validation nor fund release can execute on-chain until the network resumes.
+
+### 4. Post-Incident Recovery
+- **Evaluate Ledger Time Divergence:** Once the network resumes, check the new ledger timestamps. Stellar consensus usually catches up rapidly, meaning the network time will reflect the passage of the pause duration.
+- **Process Backlog Carefully:** 
+  1. For vaults where the `end_timestamp` expired during the pause: The contract logic heavily relies on `env.ledger().timestamp()`. If the time has passed naturally, verifiers *will not* be able to validate (`MilestoneExpired`). Creators should anticipate this, and wait for redirect or cancel flows to unlock.
+  2. For vaults still within their active window: Resume normal automated and front-end transaction submissions.
+- **Verify Initial Transactions:** Submit low-value or non-critical transactions (e.g. querying a state) to ensure the network is fully stabilized before lifting the front-end maintenance mode.
+
