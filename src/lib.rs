@@ -244,7 +244,7 @@ impl DisciplrVault {
             .ok_or(Error::VaultNotFound)?;
 
         if vault.status != VaultStatus::Active {
-            return Err(Error::VaultNotActive); // Or InvalidStatus as appropriate
+            return Err(Error::InvalidStatus); // changed from VaultNotActive
         }
 
         // Check release conditions.
