@@ -52,6 +52,7 @@ pub struct ProductivityVault {
     pub success_destination: Address, // Address for fund release on success
     pub failure_destination: Address, // Address for fund redirect on failure
     pub status: VaultStatus,        // Current vault status
+    pub milestone_validated: bool,  // True once validate_milestone is called; blocks redirect_funds
 }
 ```
 
@@ -66,6 +67,7 @@ pub struct ProductivityVault {
 | `success_destination` | `Address` | Recipient address on successful milestone completion |
 | `failure_destination` | `Address` | Recipient address when milestone is not completed |
 | `status` | `VaultStatus` | Current lifecycle state of the vault |
+| `milestone_validated` | `bool` | Set to `true` once the verifier (or creator when no verifier) calls `validate_milestone`. Blocks `redirect_funds` and enables early `release_funds` before the deadline. |
 
 ---
 
@@ -155,22 +157,26 @@ pub fn release_funds(env: Env, vault_id: u32) -> bool
 
 ### `redirect_funds`
 
-Redirects funds to the failure destination when milestone is not completed by deadline.
+Redirects funds to the failure destination when the deadline has passed **and** the milestone was never validated.
 
 ```rust
-pub fn redirect_funds(env: Env, vault_id: u32) -> bool
+pub fn redirect_funds(env: Env, vault_id: u32, usdc_token: Address) -> Result<bool, Error>
 ```
 
 **Parameters:**
 - `vault_id`: ID of the vault to redirect funds from
+- `usdc_token`: Address of the USDC token contract used at vault creation
 
-**Returns:** `bool` - True if redirect successful
+**Returns:** `Result<bool, Error>` — `Ok(true)` on success
 
-**Requirements (TODO):**
-- Vault status must be `Active`
-- Current timestamp must be past `end_timestamp`
-- Transfers USDC to `failure_destination`
-- Sets status to `Failed`
+**Requirements:**
+- Vault must exist; otherwise returns `Error::VaultNotFound`.
+- Vault status must be `Active`; otherwise returns `Error::VaultNotActive`.
+- Current timestamp must be `>= end_timestamp`; otherwise returns `Error::InvalidTimestamp`.
+- `milestone_validated` must be `false`; if the milestone was already validated, returns `Error::NotAuthorized`. Validated vaults must be settled via `release_funds`.
+- Transfers USDC to `failure_destination` and sets status to `Failed`.
+
+> **Security note (issue #118):** The `milestone_validated` guard is enforced unconditionally — even after the deadline. This prevents a race condition where a caller could redirect funds to the failure destination after the verifier has already approved the milestone.
 
 ---
 
