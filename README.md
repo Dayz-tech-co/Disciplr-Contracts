@@ -940,3 +940,99 @@ Boundary and over-limit cases are fully covered in the tests, including:
 - Duration exceeding maximum
 - Invalid timestamp ordering
 - Past start timestamps
+
+
+---
+
+## Upgrade Policy
+
+The `disciplr-vault` WASM is **immutable** after deployment — there is no proxy contract and no admin upgrade key. To deploy a new version, redeploy a fresh contract and re-initialise it. See [vesting.md](vesting.md#upgrade-policy) for full details.
+
+---
+
+## Testnet Deploy Checklist
+
+Use this checklist every time you deploy to testnet. Steps are sequential — do not skip.
+
+### Prerequisites
+- Stellar CLI installed (`stellar --version`)
+- Funded testnet keypair in `~/.config/stellar/identity/`
+- Soroban RPC endpoint: `https://soroban-testnet.stellar.org`
+- Network passphrase: `Test SDF Network ; September 2015`
+
+### Step 1 — Build
+```bash
+stellar contract build --release
+# Output: target/wasm32-unknown-unknown/release/disciplr_vault.wasm
+```
+
+### Step 2 — Install (upload WASM)
+```bash
+stellar contract install \
+  --wasm target/wasm32-unknown-unknown/release/disciplr_vault.wasm \
+  --source <YOUR_IDENTITY> \
+  --network testnet
+# Copy the returned WASM hash for Step 3.
+```
+
+### Step 3 — Deploy (instantiate)
+```bash
+stellar contract deploy \
+  --wasm-hash <WASM_HASH_FROM_STEP_2> \
+  --source <YOUR_IDENTITY> \
+  --network testnet
+# Copy the returned CONTRACT_ID for Step 4.
+```
+
+### Step 4 — Initialize
+```bash
+stellar contract invoke \
+  --id <CONTRACT_ID> \
+  --source <YOUR_IDENTITY> \
+  --network testnet \
+  -- initialize \
+  --usdc_token <USDC_TOKEN_ADDRESS>
+```
+
+### Step 5 — Smoke Test
+```bash
+# Create a minimal vault (1 USDC, 1-hour window).
+stellar contract invoke \
+  --id <CONTRACT_ID> \
+  --source <YOUR_IDENTITY> \
+  --network testnet \
+  -- create_vault \
+  --usdc_token <USDC_TOKEN_ADDRESS> \
+  --creator <YOUR_IDENTITY_ADDRESS> \
+  --amount 10000000 \
+  --start_timestamp $(date +%s) \
+  --end_timestamp $(($(date +%s) + 3600)) \
+  --milestone_hash 0000000000000000000000000000000000000000000000000000000000000000 \
+  --verifier null \
+  --success_destination <YOUR_IDENTITY_ADDRESS> \
+  --failure_destination <YOUR_IDENTITY_ADDRESS>
+
+# Verify vault was created (should return vault state with status Active).
+stellar contract invoke \
+  --id <CONTRACT_ID> \
+  --network testnet \
+  -- get_vault_state --vault_id 0
+
+# Cancel the smoke-test vault to clean up.
+stellar contract invoke \
+  --id <CONTRACT_ID> \
+  --source <YOUR_IDENTITY> \
+  --network testnet \
+  -- cancel_vault --vault_id 0 --usdc_token <USDC_TOKEN_ADDRESS>
+```
+
+### Rollback
+
+Because the WASM is immutable, "rollback" means directing integrators back to the previous contract address. No on-chain state needs to be reverted — the old contract continues to function independently.
+
+### Running Tests Locally Before Deploy
+```bash
+cargo test
+```
+
+---
