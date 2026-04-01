@@ -1,5 +1,25 @@
 # Disciplr Vault Contract Documentation
 
+## Error Reference
+
+All public contract methods return `Result<T, Error>`. The `Error` enum is defined with `#[contracterror]` and maps to on-chain error codes.
+
+| Code | Variant | Description |
+|------|---------|-------------|
+| `#1` | `VaultNotFound` | No vault record exists for the given `vault_id`. |
+| `#2` | `NotAuthorized` | Caller is not authorized (e.g. release before deadline without validation, redirect when milestone was validated). |
+| `#3` | `VaultNotActive` | Vault is not in `Active` status — already `Completed`, `Failed`, or `Cancelled`. |
+| `#4` | `InvalidTimestamp` | Timestamp constraint violated (e.g. `start_timestamp` is in the past, or redirect called before `end_timestamp`). |
+| `#5` | `MilestoneExpired` | Validation rejected because `current_time >= end_timestamp`. |
+| `#6` | `InvalidStatus` | Vault is in an invalid status for the requested operation (reserved for future use). |
+| `#7` | `InvalidAmount` | Amount is outside the allowed range (`< MIN_AMOUNT` or `> MAX_AMOUNT`). |
+| `#8` | `InvalidTimestamps` | `start_timestamp` is not strictly less than `end_timestamp`. |
+| `#9` | `DurationTooLong` | Vault duration (`end − start`) exceeds `MAX_VAULT_DURATION` (1 year). |
+
+> Panics are reserved exclusively for invariant violations that indicate a bug in the contract itself (e.g. authorization failures enforced by the Soroban runtime). All user-facing error paths return structured `Error` variants.
+
+---
+
 ## Overview
 
 The Disciplr Vault is a Soroban smart contract deployed on the Stellar blockchain that enables **programmable time-locked USDC vaults** for productivity-based milestone funding. It allows creators to lock USDC tokens with specific milestones and conditions, ensuring funds are only released upon verified completion or redirected to a failure destination if milestones are not met.
@@ -103,12 +123,13 @@ pub fn create_vault(
 - `success_destination`: Address to receive funds on success
 - `failure_destination`: Address to receive funds on failure
 
-**Returns:** `u32` - Unique vault identifier
+**Returns:** `Result<u32, Error>` — unique vault ID on success
 
-**Requirements:**
-- Caller must authorize the transaction (`creator.require_auth()`)
-- `end_timestamp` must be greater than `start_timestamp`
-- USDC transfer must be approved by creator before calling
+**Errors:**
+- `Error::InvalidAmount` — `amount < MIN_AMOUNT` or `amount > MAX_AMOUNT`
+- `Error::InvalidTimestamp` — `start_timestamp` is in the past
+- `Error::InvalidTimestamps` — `end_timestamp <= start_timestamp`
+- `Error::DurationTooLong` — duration exceeds `MAX_VAULT_DURATION`
 
 **Emits:** [`vault_created`](#vault_created) event
 
@@ -145,7 +166,7 @@ pub fn validate_milestone(env: Env, vault_id: u32) -> Result<bool, Error>
 
 ### `release_funds`
 
-Releases locked funds to the success destination (typically after validation).
+Releases locked funds to `success_destination`. Allowed after milestone validation or once the deadline has passed.
 
 ```rust
 pub fn release_funds(env: Env, vault_id: u32, usdc_token: Address) -> Result<bool, Error>
@@ -155,19 +176,18 @@ pub fn release_funds(env: Env, vault_id: u32, usdc_token: Address) -> Result<boo
 - `vault_id`: ID of the vault to release funds from
 - `usdc_token`: Address of the USDC token contract (must match the token used at creation)
 
-**Returns:** `bool` - True if release successful
+**Returns:** `Result<bool, Error>` — `true` on success
 
-**Requirements (TODO):**
-- Vault status must be `Active`
-- Caller must be authorized (verifier or contract logic)
-- Transfers USDC to `success_destination`
-- Sets status to `Completed`
+**Errors:**
+- `Error::VaultNotFound` — vault does not exist
+- `Error::VaultNotActive` — vault is not in `Active` status
+- `Error::NotAuthorized` — milestone not validated and deadline not yet reached
 
 ---
 
 ### `redirect_funds`
 
-Redirects funds to the failure destination when milestone is not completed by deadline.
+Redirects funds to `failure_destination` when the deadline passes without milestone validation.
 
 ```rust
 pub fn redirect_funds(env: Env, vault_id: u32, usdc_token: Address) -> Result<bool, Error>
@@ -177,13 +197,13 @@ pub fn redirect_funds(env: Env, vault_id: u32, usdc_token: Address) -> Result<bo
 - `vault_id`: ID of the vault to redirect funds from
 - `usdc_token`: Address of the USDC token contract (must match the token used at creation)
 
-**Returns:** `bool` - True if redirect successful
+**Returns:** `Result<bool, Error>` — `true` on success
 
-**Requirements (TODO):**
-- Vault status must be `Active`
-- Current timestamp must be past `end_timestamp`
-- Transfers USDC to `failure_destination`
-- Sets status to `Failed`
+**Errors:**
+- `Error::VaultNotFound` — vault does not exist
+- `Error::VaultNotActive` — vault is not in `Active` status
+- `Error::InvalidTimestamp` — deadline has not yet passed
+- `Error::NotAuthorized` — milestone was already validated (funds should go to success)
 
 ---
 
@@ -199,13 +219,11 @@ pub fn cancel_vault(env: Env, vault_id: u32, usdc_token: Address) -> Result<bool
 - `vault_id`: ID of the vault to cancel
 - `usdc_token`: Address of the USDC token contract (must match the token used at creation)
 
-**Returns:** `bool` - True if cancellation successful
+**Authorization:** Only the vault `creator` may call this.
 
-**Requirements (TODO):**
-- Caller must be the vault creator
-- Vault status must be `Active`
-- Returns USDC to creator
-- Sets status to `Cancelled`
+**Errors:**
+- `Error::VaultNotFound` — vault does not exist
+- `Error::VaultNotActive` — vault is not in `Active` status
 
 ---
 
@@ -265,6 +283,22 @@ Emitted when a milestone is successfully validated.
 ```
 
 **Data:** `()` (empty tuple)
+
+### `funds_released`
+
+Emitted when funds are released to `success_destination`.
+
+**Topic:** `("funds_released", vault_id)`  
+**Data:** `i128` — amount transferred
+
+---
+
+### `funds_redirected`
+
+Emitted when funds are redirected to `failure_destination`.
+
+**Topic:** `("funds_redirected", vault_id)`  
+**Data:** `i128` — amount transferred
 
 ---
 
