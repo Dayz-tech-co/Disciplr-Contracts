@@ -35,11 +35,18 @@ pub enum Error {
     InvalidTimestamps = 8,
     /// Vault duration (end − start) exceeds MAX_VAULT_DURATION.
     DurationTooLong = 9,
+    /// Milestone has already been validated for this vault.
+    AlreadyValidated = 10,
 }
 
 // ---------------------------------------------------------------------------
 // Data types
 // ---------------------------------------------------------------------------
+
+// Constants to prevent abuse, spam, and potential overflow issues
+pub const MAX_VAULT_DURATION: u64 = 365 * 24 * 60 * 60; // 1 year in seconds
+pub const MIN_AMOUNT: i128 = 10_000_000; // 1 USDC with 7 decimals
+pub const MAX_AMOUNT: i128 = 10_000_000_000_000; // 10 million USDC with 7 decimals
 
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -83,11 +90,6 @@ pub struct ProductivityVault {
 // ---------------------------------------------------------------------------
 // Storage keys
 // ---------------------------------------------------------------------------
-
-// Constants to prevent abuse, spam, and potential overflow issues
-pub const MAX_VAULT_DURATION: u64 = 365 * 24 * 60 * 60; // 1 year in seconds
-pub const MIN_AMOUNT: i128 = 10_000_000; // 1 USDC with 7 decimals
-pub const MAX_AMOUNT: i128 = 10_000_000_000_000; // 10 million USDC with 7 decimals
 
 #[contracttype]
 #[derive(Clone)]
@@ -198,6 +200,7 @@ impl DisciplrVault {
     /// **Optional verifier behavior:** If `verifier` is `Some(addr)`, only that address may call
     /// this function. If `verifier` is `None`, only the creator may call it (no validation by
     /// other parties). Rejects when current time >= end_timestamp (MilestoneExpired).
+    /// Returns `Error::AlreadyValidated` if the milestone was previously validated.
     pub fn validate_milestone(env: Env, vault_id: u32) -> Result<bool, Error> {
         let vault_key = DataKey::Vault(vault_id);
         let mut vault: ProductivityVault = env
@@ -208,6 +211,10 @@ impl DisciplrVault {
 
         if vault.status != VaultStatus::Active {
             return Err(Error::VaultNotActive);
+        }
+
+        if vault.milestone_validated {
+            return Err(Error::AlreadyValidated);
         }
 
         // When verifier is Some, only that address may validate; when None, only creator may validate.
@@ -413,9 +420,6 @@ mod tests {
             let env = Env::default();
             env.mock_all_auths();
 
-            // Set ledger time to 0 so test timestamps work
-            env.ledger().set_timestamp(0);
-
             // Deploy USDC mock token.
             let usdc_admin = Address::generate(&env);
             let usdc_token = env.register_stellar_asset_contract_v2(usdc_admin.clone());
@@ -429,7 +433,7 @@ mod tests {
             let failure_dest = Address::generate(&env);
 
             // Mint USDC to creator.
-            let amount: i128 = MIN_AMOUNT;
+            let amount: i128 = 1_000_000; // 1 USDC (6 decimals)
             usdc_asset.mint(&creator, &amount);
 
             // Deploy contract.
@@ -891,6 +895,23 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_milestone_duplicate_rejected() {
+        let setup = TestSetup::new();
+        let client = setup.client();
+
+        setup.env.ledger().set_timestamp(setup.start_timestamp);
+        let vault_id = setup.create_vault_no_verifier();
+
+        // First validation should succeed.
+        let result = client.validate_milestone(&vault_id);
+        assert!(result);
+
+        // Second validation should fail with AlreadyValidated error.
+        let err = client.try_validate_milestone(&vault_id);
+        assert!(err.is_err());
+    }
+
+    #[test]
     fn test_redirect_funds_after_deadline_without_validation() {
         let setup = TestSetup::new();
         let client = setup.client();
@@ -1102,7 +1123,6 @@ mod tests {
     fn test_create_vault_emits_event_and_returns_id() {
         let env = Env::default();
         env.mock_all_auths();
-        env.ledger().set_timestamp(0);
 
         let usdc_admin = Address::generate(&env);
         let usdc_token = env.register_stellar_asset_contract_v2(usdc_admin.clone());
@@ -1117,7 +1137,7 @@ mod tests {
         let failure_destination = Address::generate(&env);
         let verifier = Address::generate(&env);
         let milestone_hash = BytesN::from_array(&env, &[1u8; 32]);
-        let amount = MIN_AMOUNT;
+        let amount = 1_000_000i128;
         let start_timestamp = 1_000_000u64;
         let end_timestamp = 2_000_000u64;
 
@@ -1255,7 +1275,7 @@ mod tests {
 mod test {
     use super::*;
     use soroban_sdk::{
-        testutils::{Address as _, Ledger},
+        testutils::Address as _,
         token::{StellarAssetClient, TokenClient},
         Address, Env,
     };
@@ -1283,7 +1303,6 @@ mod test {
     fn test_create_vault_success() {
         let env = Env::default();
         env.mock_all_auths();
-        env.ledger().set_timestamp(0);
 
         let admin = Address::generate(&env);
         let creator = Address::generate(&env);
@@ -1294,7 +1313,7 @@ mod test {
         let vault_contract = create_vault_contract(&env);
 
         // Mint USDC to creator and approve contract
-        token_admin.mint(&creator, &(MIN_AMOUNT * 2));
+        token_admin.mint(&creator, &1000);
 
         let vault_client = DisciplrVaultClient::new(&env, &vault_contract);
         let milestone_hash = BytesN::from_array(&env, &[1u8; 32]);
@@ -1302,7 +1321,7 @@ mod test {
         let vault_id = vault_client.create_vault(
             &token_address,
             &creator,
-            &MIN_AMOUNT,
+            &500,
             &100,
             &200,
             &milestone_hash,
@@ -1312,8 +1331,8 @@ mod test {
         );
 
         assert_eq!(vault_id, 0);
-        assert_eq!(token_client.balance(&creator), MIN_AMOUNT);
-        assert_eq!(token_client.balance(&vault_contract), MIN_AMOUNT);
+        assert_eq!(token_client.balance(&creator), 500);
+        assert_eq!(token_client.balance(&vault_contract), 500);
     }
 
     #[test]
@@ -1321,7 +1340,6 @@ mod test {
     fn test_create_vault_zero_amount() {
         let env = Env::default();
         env.mock_all_auths();
-        env.ledger().set_timestamp(0);
 
         let admin = Address::generate(&env);
         let creator = Address::generate(&env);
@@ -1349,7 +1367,6 @@ mod test {
     fn test_create_vault_negative_amount() {
         let env = Env::default();
         env.mock_all_auths();
-        env.ledger().set_timestamp(0);
 
         let admin = Address::generate(&env);
         let creator = Address::generate(&env);
@@ -1377,7 +1394,6 @@ mod test {
     fn test_create_vault_invalid_timestamps() {
         let env = Env::default();
         env.mock_all_auths();
-        env.ledger().set_timestamp(0);
 
         let admin = Address::generate(&env);
         let creator = Address::generate(&env);
@@ -1390,7 +1406,7 @@ mod test {
         vault_client.create_vault(
             &token_address,
             &creator,
-            &MIN_AMOUNT,
+            &500,
             &200,
             &100,
             &milestone_hash,
@@ -1405,7 +1421,6 @@ mod test {
     fn test_create_vault_equal_timestamps() {
         let env = Env::default();
         env.mock_all_auths();
-        env.ledger().set_timestamp(0);
 
         let admin = Address::generate(&env);
         let creator = Address::generate(&env);
@@ -1418,7 +1433,7 @@ mod test {
         vault_client.create_vault(
             &token_address,
             &creator,
-            &MIN_AMOUNT,
+            &500,
             &100,
             &100,
             &milestone_hash,
@@ -1433,15 +1448,14 @@ mod test {
     fn test_create_vault_insufficient_balance() {
         let env = Env::default();
         env.mock_all_auths();
-        env.ledger().set_timestamp(0);
 
         let admin = Address::generate(&env);
         let creator = Address::generate(&env);
         let (token_address, token_admin, _) = create_token_contract(&env, &admin);
         let vault_contract = create_vault_contract(&env);
 
-        // Mint only half of MIN_AMOUNT but try to lock MIN_AMOUNT
-        token_admin.mint(&creator, &(MIN_AMOUNT / 2));
+        // Mint only 100 USDC but try to lock 500
+        token_admin.mint(&creator, &100);
 
         let vault_client = DisciplrVaultClient::new(&env, &vault_contract);
         let milestone_hash = BytesN::from_array(&env, &[1u8; 32]);
@@ -1449,7 +1463,7 @@ mod test {
         vault_client.create_vault(
             &token_address,
             &creator,
-            &MIN_AMOUNT,
+            &500,
             &100,
             &200,
             &milestone_hash,
@@ -1463,7 +1477,6 @@ mod test {
     fn test_create_vault_with_verifier() {
         let env = Env::default();
         env.mock_all_auths();
-        env.ledger().set_timestamp(0);
 
         let admin = Address::generate(&env);
         let creator = Address::generate(&env);
@@ -1471,7 +1484,7 @@ mod test {
         let (token_address, token_admin, token_client) = create_token_contract(&env, &admin);
         let vault_contract = create_vault_contract(&env);
 
-        token_admin.mint(&creator, &(MIN_AMOUNT * 2));
+        token_admin.mint(&creator, &1000);
 
         let vault_client = DisciplrVaultClient::new(&env, &vault_contract);
         let milestone_hash = BytesN::from_array(&env, &[1u8; 32]);
@@ -1479,7 +1492,7 @@ mod test {
         let vault_id = vault_client.create_vault(
             &token_address,
             &creator,
-            &MIN_AMOUNT,
+            &500,
             &100,
             &200,
             &milestone_hash,
@@ -1489,14 +1502,13 @@ mod test {
         );
 
         assert_eq!(vault_id, 0);
-        assert_eq!(token_client.balance(&vault_contract), MIN_AMOUNT);
+        assert_eq!(token_client.balance(&vault_contract), 500);
     }
 
     #[test]
     fn test_create_vault_exact_balance() {
         let env = Env::default();
         env.mock_all_auths();
-        env.ledger().set_timestamp(0);
 
         let admin = Address::generate(&env);
         let creator = Address::generate(&env);
@@ -1504,7 +1516,7 @@ mod test {
         let vault_contract = create_vault_contract(&env);
 
         // Mint exact amount needed
-        token_admin.mint(&creator, &MIN_AMOUNT);
+        token_admin.mint(&creator, &500);
 
         let vault_client = DisciplrVaultClient::new(&env, &vault_contract);
         let milestone_hash = BytesN::from_array(&env, &[1u8; 32]);
@@ -1512,7 +1524,7 @@ mod test {
         let vault_id = vault_client.create_vault(
             &token_address,
             &creator,
-            &MIN_AMOUNT,
+            &500,
             &100,
             &200,
             &milestone_hash,
@@ -1523,6 +1535,6 @@ mod test {
 
         assert_eq!(vault_id, 0);
         assert_eq!(token_client.balance(&creator), 0);
-        assert_eq!(token_client.balance(&vault_contract), MIN_AMOUNT);
+        assert_eq!(token_client.balance(&vault_contract), 500);
     }
 }
